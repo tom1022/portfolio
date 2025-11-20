@@ -28,7 +28,7 @@ jobs:
       - name: Build Docker image
         run: |
           echo "Building Docker image ${DOCKER_IMAGE}:${GITHUB_SHA}"
-          docker build -t "${DOCKER_IMAGE}:${GITHUB_SHA}" .
+          docker build --build-arg NEXT_PUBLIC_TURNSTILE_SITE_KEY="${NEXT_PUBLIC_TURNSTILE_SITE_KEY}" -t "${DOCKER_IMAGE}:${GITHUB_SHA}" .
           docker save "${DOCKER_IMAGE}:${GITHUB_SHA}" | gzip > "image_${GITHUB_SHA}.tar.gz"
 
       - name: Start ssh-agent and add key
