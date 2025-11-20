@@ -134,6 +134,18 @@ jobs:
                docker rmi -f "$OLD" || true; \
              done || true"
 
+      - name: Notify Discord on success
+        if: ${{ success() }}
+        run: |
+          MSG=":white_check_mark: Deploy succeeded for ${GITHUB_REPOSITORY} @ ${GITHUB_SHA}\nRun: ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
+          curl -sS -H "Content-Type: application/json" -X POST -d "{\"content\": \"${MSG}\"}" "${DISCORD_WEBHOOK_URL}" || true
+
+      - name: Notify Discord on failure
+        if: ${{ failure() }}
+        run: |
+          MSG=":x: Deploy FAILED for ${GITHUB_REPOSITORY} @ ${GITHUB_SHA}\nRun: ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
+          curl -sS -H "Content-Type: application/json" -X POST -d "{\"content\": \"${MSG}\"}" "${DISCORD_WEBHOOK_URL}" || true
+
       - name: Cleanup local tarball
         if: always()
         run: |

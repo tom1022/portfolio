@@ -67,7 +67,7 @@ export default function ContactSection() {
                     <div className="p-6 border rounded bg-white shadow-sm flex flex-col items-center">
                         <p className="mb-4 text-gray-700">Please pass the verification below to reveal the contact information:</p>
                         <Turnstile
-                            siteKey={process.env.TURNSTILE_SITE_KEY}
+                            siteKey={process.env.NEXT_PUBLIC_TURNSTILE_SITE_KEY}
                             options={{ theme: 'auto' }}
                             onSuccess={handleTurnstileSuccess}
                         />
