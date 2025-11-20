@@ -67,7 +67,7 @@ jobs:
           echo "${KNOWN_HOSTS}" > ~/.ssh/known_hosts
           chmod 600 ~/.ssh/known_hosts
 
-      - name: Debug: ssh verbose test (one-shot)
+      - name: Debug ssh verbose test (one-shot)
         run: |
           echo "Testing SSH connectivity to ${SSH_HOST} (verbose)"
           # Use BatchMode to avoid password prompts; show verbose logs for debugging
