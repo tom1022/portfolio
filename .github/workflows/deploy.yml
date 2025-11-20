@@ -71,10 +71,10 @@ jobs:
       - name: Create `.env.deploy` from repository secrets
         run: |
           cat > .env.deploy <<'EOF'
-NEXT_PUBLIC_TURNSTILE_SITE_KEY=${NEXT_PUBLIC_TURNSTILE_SITE_KEY}
-TURNSTILE_SECRET_KEY=${TURNSTILE_SECRET_KEY}
-DISCORD_WEBHOOK_URL=${DISCORD_WEBHOOK_URL}
-EOF
+          NEXT_PUBLIC_TURNSTILE_SITE_KEY=${NEXT_PUBLIC_TURNSTILE_SITE_KEY}
+          TURNSTILE_SECRET_KEY=${TURNSTILE_SECRET_KEY}
+          DISCORD_WEBHOOK_URL=${DISCORD_WEBHOOK_URL}
+          EOF
       - name: Copy .env and image tarball to server
         run: |
           if [ -n "${KNOWN_HOSTS}" ]; then
