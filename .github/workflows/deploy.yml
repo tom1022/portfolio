@@ -118,7 +118,7 @@ jobs:
              else \
                echo "Container ${DOCKER_CONTAINER} not found, skipping stop/rm"; \
              fi && \
-             docker run -d --name ${DOCKER_CONTAINER} ${DOCKER_RUN_ARGS:-'-p 80:300 --restart unless-stopped'} --sysctl net.ipv4.ip_unprivileged_port_start=0 ${DOCKER_IMAGE}:${GITHUB_SHA}"
+             docker run -d --name ${DOCKER_CONTAINER} ${DOCKER_RUN_ARGS:-'-p 80:300 --restart unless-stopped'} ${DOCKER_IMAGE}:${GITHUB_SHA}"
 
       - name: Cleanup local tarball
         if: always()
