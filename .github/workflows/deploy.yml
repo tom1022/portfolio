@@ -22,6 +22,11 @@ jobs:
       DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
 
     steps:
+      - name: Notify Discord on start
+        run: |
+          MSG=":arrow_forward: Deploy started for ${GITHUB_REPOSITORY} @ ${GITHUB_SHA}\nRun: ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
+          curl -sS -H "Content-Type: application/json" -X POST -d "{\"content\": \"${MSG}\"}" "${DISCORD_WEBHOOK_URL}" || true
+
       - name: Checkout repository
         uses: actions/checkout@v4
 
@@ -75,11 +80,10 @@ jobs:
 
       - name: Create `.env.deploy` from repository secrets
         run: |
-          cat > .env.deploy <<'EOF'
-          NEXT_PUBLIC_TURNSTILE_SITE_KEY=${NEXT_PUBLIC_TURNSTILE_SITE_KEY}
-          TURNSTILE_SECRET_KEY=${TURNSTILE_SECRET_KEY}
-          DISCORD_WEBHOOK_URL=${DISCORD_WEBHOOK_URL}
-          EOF
+          printf '%s\n' \
+            "NEXT_PUBLIC_TURNSTILE_SITE_KEY=${NEXT_PUBLIC_TURNSTILE_SITE_KEY}" \
+            "TURNSTILE_SECRET_KEY=${TURNSTILE_SECRET_KEY}" \
+            "DISCORD_WEBHOOK_URL=${DISCORD_WEBHOOK_URL}" > .env.deploy
       - name: Preflight DNS and TCP check
         run: |
           echo "Resolving ${SSH_HOST}"
@@ -94,7 +98,7 @@ jobs:
             echo "TCP connect failed (port closed or filtered)"
           fi
           echo "Attempting SSH verbose handshake (may show banner timeout)"
-          ssh -vvv -o BatchMode=yes -o ConnectTimeout=10 -p "${PORT}" "${SSH_USER}@${SSH_HOST}" 'exit' || true
+          ssh -o BatchMode=yes -o ConnectTimeout=10 -p "${PORT}" "${SSH_USER}@${SSH_HOST}" 'exit' || true
       - name: Copy .env and image tarball to server
         run: |
           if [ -n "${KNOWN_HOSTS}" ]; then
@@ -104,8 +108,8 @@ jobs:
           fi
           SSH_OPTS="${SSH_OPTS} -o BatchMode=yes -o ConnectTimeout=10"
           echo "Uploading image and .env to ${SSH_HOST} (scp verbose)"
-          scp -v ${SSH_OPTS} -P ${SSH_PORT:-22} "image_${GITHUB_SHA}.tar.gz" "${SSH_USER}@${SSH_HOST}:~/"
-          scp -v ${SSH_OPTS} -P ${SSH_PORT:-22} ".env.deploy" "${SSH_USER}@${SSH_HOST}:~/"
+          scp ${SSH_OPTS} -P ${SSH_PORT:-22} "image_${GITHUB_SHA}.tar.gz" "${SSH_USER}@${SSH_HOST}:~/"
+          scp ${SSH_OPTS} -P ${SSH_PORT:-22} ".env.deploy" "${SSH_USER}@${SSH_HOST}:~/"
           shred -u .env.deploy || rm -f .env.deploy || true
 
       - name: Deploy on remote server
@@ -118,7 +122,7 @@ jobs:
           fi
           SSH_OPTS="${SSH_OPTS} -o BatchMode=yes -o ConnectTimeout=10"
           echo "Running remote commands (ssh verbose)"
-          ssh -v ${SSH_OPTS} -p ${SSH_PORT:-22} ${SSH_USER}@${SSH_HOST} \
+          ssh ${SSH_OPTS} -p ${SSH_PORT:-22} ${SSH_USER}@${SSH_HOST} \
             "set -x && mkdir -p ~/app || true && mv ~/.env.deploy ~/app/.env || true && \
              chown ${SSH_USER}:${SSH_USER} ~/app/.env || true && chmod 600 ~/app/.env || true && \
              docker load -i ~/image_${GITHUB_SHA}.tar.gz && \
