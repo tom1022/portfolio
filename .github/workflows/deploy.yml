@@ -112,8 +112,12 @@ jobs:
             "mkdir -p ~/app || true && mv ~/.env.deploy ~/app/.env || true && \
              chown ${SSH_USER}:${SSH_USER} ~/app/.env || true && chmod 600 ~/app/.env || true && \
              docker load -i ~/image_${GITHUB_SHA}.tar.gz && \
-             docker stop ${DOCKER_CONTAINER} || true && \
-             docker rm ${DOCKER_CONTAINER} || true && \
+             if docker ps -a --format '{{.Names}}' | grep -wq \"${DOCKER_CONTAINER}\"; then \
+               docker stop ${DOCKER_CONTAINER} || true && \
+               docker rm ${DOCKER_CONTAINER} || true; \
+             else \
+               echo "Container ${DOCKER_CONTAINER} not found, skipping stop/rm"; \
+             fi && \
              docker run -d --name ${DOCKER_CONTAINER} ${DOCKER_RUN_ARGS:-'-p 80:300 --restart unless-stopped'} ${DOCKER_IMAGE}:${GITHUB_SHA}"
 
       - name: Cleanup local tarball
