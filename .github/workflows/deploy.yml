@@ -80,6 +80,21 @@ jobs:
           TURNSTILE_SECRET_KEY=${TURNSTILE_SECRET_KEY}
           DISCORD_WEBHOOK_URL=${DISCORD_WEBHOOK_URL}
           EOF
+      - name: Preflight DNS and TCP check
+        run: |
+          echo "Resolving ${SSH_HOST}"
+          getent hosts "${SSH_HOST}" || (which nslookup >/dev/null 2>&1 && nslookup "${SSH_HOST}") || true
+          PORT=${SSH_PORT:-22}
+          echo "Testing TCP connect to ${SSH_HOST}:${PORT} (will install netcat if needed)"
+          sudo apt-get update -y || true
+          sudo apt-get install -y netcat-openbsd || true
+          if nc -vz -w5 "${SSH_HOST}" "${PORT}"; then
+            echo "TCP connect succeeded"
+          else
+            echo "TCP connect failed (port closed or filtered)"
+          fi
+          echo "Attempting SSH verbose handshake (may show banner timeout)"
+          ssh -vvv -o BatchMode=yes -o ConnectTimeout=10 -p "${PORT}" "${SSH_USER}@${SSH_HOST}" 'exit' || true
       - name: Copy .env and image tarball to server
         run: |
           if [ -n "${KNOWN_HOSTS}" ]; then
