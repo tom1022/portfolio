@@ -3,10 +3,6 @@ name: Deploy to on-prem Docker
 on:
   push:
     branches: [ main ]
-      - name: Debug list ssh-agent keys
-        run: |
-          echo "Listing keys in ssh-agent (fingerprints only)"
-          ssh-add -l || echo "ssh-add -l failed or no keys loaded"
   workflow_dispatch:
 
 jobs:
