@@ -1,0 +1,108 @@
+name: Deploy to on-prem Docker
+
+on:
+  push:
+    branches: [ main ]
+
+jobs:
+  deploy:
+    name: Build image and deploy to on-prem Docker host
+    runs-on: ubuntu-latest
+    env:
+      SSH_USER: ${{ secrets.SSH_USER }}
+      SSH_HOST: ${{ secrets.SSH_HOST }}
+      SSH_PORT: ${{ secrets.SSH_PORT }}
+      DOCKER_IMAGE: ${{ secrets.DOCKER_IMAGE }}
+      DOCKER_CONTAINER: ${{ secrets.DOCKER_CONTAINER }}
+      DOCKER_RUN_ARGS: ${{ secrets.DOCKER_RUN_ARGS }}
+      TAILSCALE_AUTHKEY: ${{ secrets.TAILSCALE_AUTHKEY }}
+      NEXT_PUBLIC_TURNSTILE_SITE_KEY: ${{ secrets.NEXT_PUBLIC_TURNSTILE_SITE_KEY }}
+      TURNSTILE_SECRET_KEY: ${{ secrets.TURNSTILE_SECRET_KEY }}
+      DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Build Docker image
+        run: |
+          echo "Building Docker image ${DOCKER_IMAGE}:${GITHUB_SHA}"
+          docker build -t "${DOCKER_IMAGE}:${GITHUB_SHA}" .
+          docker save "${DOCKER_IMAGE}:${GITHUB_SHA}" | gzip > "image_${GITHUB_SHA}.tar.gz"
+
+      - name: Start ssh-agent and add key
+        uses: webfactory/ssh-agent@v0.8.1
+        with:
+          ssh-private-key: ${{ secrets.SSH_PRIVATE_KEY }}
+
+      - name: Install and start Tailscale (when auth key provided)
+        if: env.TAILSCALE_AUTHKEY != ''
+        run: |
+          echo "TAILSCALE_AUTHKEY provided — installing tailscale"
+          sudo apt-get update -y
+          curl -fsSL https://tailscale.com/install.sh | sudo sh
+          sudo tailscaled --tun=userspace-networking &
+          sleep 1
+          sudo tailscale up --authkey=${TAILSCALE_AUTHKEY} --hostname=gha-deploy-${GITHUB_RUN_ID} || true
+          sudo tailscale status || true
+
+      - name: Prepare SSH known_hosts (when provided)
+        if: env.KNOWN_HOSTS != ''
+        run: |
+          mkdir -p ~/.ssh
+          echo "${KNOWN_HOSTS}" > ~/.ssh/known_hosts
+          chmod 600 ~/.ssh/known_hosts
+
+      - name: Validate required secrets and env
+        run: |
+          # Fail early if required values are missing — these are necessary for the app to run
+          required=(TAILSCALE_AUTHKEY SSH_USER SSH_HOST DOCKER_IMAGE DOCKER_CONTAINER NEXT_PUBLIC_TURNSTILE_SITE_KEY TURNSTILE_SECRET_KEY DISCORD_WEBHOOK_URL)
+          missing=()
+          for v in "${required[@]}"; do
+            if [ -z "${!v}" ]; then
+              missing+=("$v")
+            fi
+          done
+          if [ ${#missing[@]} -gt 0 ]; then
+            echo "Missing required environment/secrets: ${missing[*]}"
+            exit 1
+          fi
+
+      - name: Create `.env.deploy` from repository secrets
+        run: |
+          cat > .env.deploy <<'EOF'
+NEXT_PUBLIC_TURNSTILE_SITE_KEY=${NEXT_PUBLIC_TURNSTILE_SITE_KEY}
+TURNSTILE_SECRET_KEY=${TURNSTILE_SECRET_KEY}
+DISCORD_WEBHOOK_URL=${DISCORD_WEBHOOK_URL}
+EOF
+      - name: Copy .env and image tarball to server
+        run: |
+          if [ -n "${KNOWN_HOSTS}" ]; then
+            SSH_OPTS="-o UserKnownHostsFile=~/.ssh/known_hosts -o StrictHostKeyChecking=yes"
+          else
+            SSH_OPTS="-o StrictHostKeyChecking=no"
+          fi
+          scp ${SSH_OPTS} -P ${SSH_PORT:-22} "image_${GITHUB_SHA}.tar.gz" "${SSH_USER}@${SSH_HOST}:~/"
+          scp ${SSH_OPTS} -P ${SSH_PORT:-22} ".env.deploy" "${SSH_USER}@${SSH_HOST}:~/"
+          shred -u .env.deploy || rm -f .env.deploy || true
+
+      - name: Deploy on remote server
+        run: |
+          echo "Loading image and running container on remote host"
+          if [ -n "${KNOWN_HOSTS}" ]; then
+            SSH_OPTS="-o UserKnownHostsFile=~/.ssh/known_hosts -o StrictHostKeyChecking=yes"
+          else
+            SSH_OPTS="-o StrictHostKeyChecking=no"
+          fi
+          ssh ${SSH_OPTS} -p ${SSH_PORT:-22} ${SSH_USER}@${SSH_HOST} \
+            "mkdir -p ~/app || true && mv ~/.env.deploy ~/app/.env || true && \
+             chown ${SSH_USER}:${SSH_USER} ~/app/.env || true && chmod 600 ~/app/.env || true && \
+             docker load -i ~/image_${GITHUB_SHA}.tar.gz && \
+             docker stop ${DOCKER_CONTAINER} || true && \
+             docker rm ${DOCKER_CONTAINER} || true && \
+             docker run -d --name ${DOCKER_CONTAINER} ${DOCKER_RUN_ARGS:-'-p 80:300 --restart unless-stopped'} ${DOCKER_IMAGE}:${GITHUB_SHA}"
+
+      - name: Cleanup local tarball
+        if: always()
+        run: |
+          rm -f "image_${GITHUB_SHA}.tar.gz"
