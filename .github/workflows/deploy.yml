@@ -48,8 +48,12 @@ jobs:
           curl -fsSL https://tailscale.com/install.sh | sudo sh
           sudo tailscaled --tun=userspace-networking &
           sleep 1
-          sudo tailscale up --authkey=${TAILSCALE_AUTHKEY} --hostname=gha-deploy-${GITHUB_RUN_ID} || true
+          # Join Tailnet and accept subnet routes so the runner can reach LAN addresses
+          sudo tailscale up --authkey=${TAILSCALE_AUTHKEY} --hostname=gha-deploy-${GITHUB_RUN_ID} --accept-routes || true
           sudo tailscale status || true
+          # show IP and routing info to help debug connectivity to advertised subnets
+          ip addr || true
+          ip route || true
 
       - name: Prepare SSH known_hosts (when provided)
         if: env.KNOWN_HOSTS != ''
