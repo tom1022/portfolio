@@ -2,7 +2,7 @@
 
 import { useState } from 'react';
 import { Turnstile } from '@marsidev/react-turnstile';
-import { verifyTurnstile } from '@/actions'
+// server-side verification happens on form submit; don't verify token twice
 import Image from 'next/image';
 
 export default function ContactSection() {
@@ -41,22 +41,10 @@ export default function ContactSection() {
         }
     };
 
-    const handleTurnstileSuccess = async (token) => {
+    const handleTurnstileSuccess = (token) => {
         setError(null);
         setTurnstileToken(token);
-        try {
-            const formData = new FormData();
-            formData.append('cf-turnstile-response', token);
-
-            const result = await verifyTurnstile(formData);
-            if (result.success) {
-                setIsAuthenticated(true);
-            } else {
-                setError(result.error || 'Verification failed. Please try again.');
-            }
-        } catch (err) {
-            setError('Verification failed. Please try again.');
-        }
+        setIsAuthenticated(true);
     };
     return (
         <section id="contact" className="py-16">
