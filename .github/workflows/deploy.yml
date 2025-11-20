@@ -20,7 +20,6 @@ jobs:
       NEXT_PUBLIC_TURNSTILE_SITE_KEY: ${{ secrets.NEXT_PUBLIC_TURNSTILE_SITE_KEY }}
       TURNSTILE_SECRET_KEY: ${{ secrets.TURNSTILE_SECRET_KEY }}
       DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
-      SSH_PRIVATE_KEY_BASE64: ${{ secrets.SSH_PRIVATE_KEY_BASE64 }}
 
     steps:
       - name: Checkout repository
@@ -39,26 +38,10 @@ jobs:
           eval "$(ssh-agent -s)"
           echo "SSH_AUTH_SOCK=$SSH_AUTH_SOCK" >> $GITHUB_ENV
           echo "SSH_AGENT_PID=$SSH_AGENT_PID" >> $GITHUB_ENV
-          tmp_key=~/.ssh/id_deploy
-            # If you store the private key as base64 in the secret, decode it (preserves newlines).
-            if [ -n "$SSH_PRIVATE_KEY_BASE64" ]; then
-              echo "$SSH_PRIVATE_KEY_BASE64" | base64 --decode > "$tmp_key"
-            else
-              # If the secret was pasted with literal "\\n" sequences, expand them safely.
-              if printf '%s' "$SSH_PRIVATE_KEY" | grep -q '\\\\n'; then
-                printf '%b' "$SSH_PRIVATE_KEY" | sed 's/\r$//' > "$tmp_key"
-              else
-                printf '%s' "$SSH_PRIVATE_KEY" | sed 's/\r$//' > "$tmp_key"
-              fi
-            fi
-          chmod 600 "$tmp_key"
-          ssh-add "$tmp_key" || {
+          printf '%s' "$SSH_PRIVATE_KEY" | tr -d '\r' | ssh-add - || {
             echo 'ERROR: ssh-add failed — check that SSH_PRIVATE_KEY is a valid unencrypted private key';
-            shred -u "$tmp_key" || rm -f "$tmp_key" || true
             exit 1;
           }
-          # securely remove temporary key file
-          shred -u "$tmp_key" || rm -f "$tmp_key" || true
         env:
           SSH_PRIVATE_KEY: ${{ secrets.SSH_PRIVATE_KEY }}
 
@@ -84,11 +67,6 @@ jobs:
           echo "${KNOWN_HOSTS}" > ~/.ssh/known_hosts
           chmod 600 ~/.ssh/known_hosts
 
-      - name: Debug ssh verbose test (one-shot)
-        run: |
-          echo "Testing SSH connectivity to ${SSH_HOST} (verbose)"
-          # Use BatchMode to avoid password prompts; show verbose logs for debugging
-          ssh -vvv -o BatchMode=yes -p ${SSH_PORT:-22} ${SSH_USER}@${SSH_HOST} echo connected || true
       - name: Validate required secrets and env
         run: |
           # Fail early if required values are missing — these are necessary for the app to run
