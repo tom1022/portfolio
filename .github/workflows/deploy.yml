@@ -3,6 +3,10 @@ name: Deploy to on-prem Docker
 on:
   push:
     branches: [ main ]
+      - name: Debug: list ssh-agent keys
+        run: |
+          echo "Listing keys in ssh-agent (fingerprints only)"
+          ssh-add -l || echo "ssh-add -l failed or no keys loaded"
   workflow_dispatch:
 
 jobs:
@@ -67,6 +71,11 @@ jobs:
           echo "${KNOWN_HOSTS}" > ~/.ssh/known_hosts
           chmod 600 ~/.ssh/known_hosts
 
+      - name: Debug: ssh verbose test (one-shot)
+        run: |
+          echo "Testing SSH connectivity to ${SSH_HOST} (verbose)"
+          # Use BatchMode to avoid password prompts; show verbose logs for debugging
+          ssh -vvv -o BatchMode=yes -p ${SSH_PORT:-22} ${SSH_USER}@${SSH_HOST} echo connected || true
       - name: Validate required secrets and env
         run: |
           # Fail early if required values are missing — these are necessary for the app to run
