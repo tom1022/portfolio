@@ -38,6 +38,13 @@ Worker 側のシークレットとして都度反映する。
 シークレットではないため対象外とし、引き続き GitHub Actions の repository
 secret から `next build` 時の環境変数として供給する。
 
+CI は Infisical machine identity `GitHub Actions`（project `fickledev`、
+Universal Auth、role `Viewer`）で認証する。ホームラボ全体の管理に使う
+`ansible-terraform-cli` とは分離された、本リポジトリの CI 専用の identity
+である。client id / client secret は本リポジトリの GitHub Actions
+シークレット `INFISICAL_UNIVERSAL_AUTH_CLIENT_ID` /
+`INFISICAL_UNIVERSAL_AUTH_CLIENT_SECRET` に登録する。
+
 ## デプロイ手順
 
 `main` への push、または `workflow_dispatch` の手動実行で
@@ -53,21 +60,11 @@ secret から `next build` 時の環境変数として供給する。
   `TURNSTILE_SECRET_KEY` / `DISCORD_WEBHOOK_URL` をローカル用の値で設定
   する。`.dev.vars` は `.gitignore` の対象でありコミットしない）
 
-## 未整備
+## 既知の制約
 
-- `CLOUDFLARE_WORKERS_API_TOKEN` / `PORTFOLIO_DISCORD_WEBHOOK_URL` /
-  `PORTFOLIO_TURNSTILE_SECRET_KEY` は Infisical 上にプレースホルダのみ
-  存在する。運用者が実値（`Account / Workers Scripts / Edit` 権限を持つ
-  Cloudflare API トークン、Discord Webhook URL、Turnstile の実際の
-  secret key）へ差し替えるまで、CI からの実デプロイは行えない。
-  `CLOUDFLARE_ACCOUNT_ID` / `CLOUDFLARE_ZONE_ID` は実値が登録済み。
-- CI から Infisical への認証に使う `INFISICAL_UNIVERSAL_AUTH_CLIENT_ID` /
-  `INFISICAL_UNIVERSAL_AUTH_CLIENT_SECRET` は、本リポジトリの GitHub
-  Actions シークレットとしてまだ登録されていない。既存の Infisical
-  machine identity は `prod` 環境の全キー（ホームラボ全体のシークレット
-  を含む）に到達できるロールしか持たないため、そのまま公開リポジトリの
-  CI に登録することは避ける。運用者が本リポジトリ用のキー 3 件
-  （`PORTFOLIO_TURNSTILE_SECRET_KEY` / `PORTFOLIO_DISCORD_WEBHOOK_URL` /
-  `CLOUDFLARE_WORKERS_API_TOKEN`）と、配信先切り替え後に必要になる
-  `CLOUDFLARE_ACCOUNT_ID` に絞った新しい machine identity を Infisical
-  上で発行し、その client id / secret を登録する必要がある。
+- Infisical identity `GitHub Actions` の role は project 単位の `Viewer`
+  であり、`prod` 以外の environment も含め project 内の全キーを読み取れる。
+  folder/path 単位でのアクセス制御は未設定のため、CI が本来必要とする
+  4 キー（`PORTFOLIO_TURNSTILE_SECRET_KEY` / `PORTFOLIO_DISCORD_WEBHOOK_URL`
+  / `CLOUDFLARE_WORKERS_API_TOKEN` / `CLOUDFLARE_ACCOUNT_ID`）より広い
+  範囲に到達可能な状態にある。
