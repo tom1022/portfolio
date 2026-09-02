@@ -1,4 +1,4 @@
-name: Deploy to on-prem Docker
+name: Deploy to Cloudflare Workers
 
 on:
   push:
@@ -7,150 +7,76 @@ on:
 
 jobs:
   deploy:
-    name: Build image and deploy to on-prem Docker host
+    name: Build static export and deploy Worker
     runs-on: ubuntu-latest
     env:
-      SSH_USER: ${{ secrets.SSH_USER }}
-      SSH_HOST: ${{ secrets.SSH_HOST }}
-      SSH_PORT: ${{ secrets.SSH_PORT }}
-      DOCKER_IMAGE: ${{ secrets.DOCKER_IMAGE }}
-      DOCKER_CONTAINER: ${{ secrets.DOCKER_CONTAINER }}
-      DOCKER_RUN_ARGS: ${{ secrets.DOCKER_RUN_ARGS }}
-      TAILSCALE_AUTHKEY: ${{ secrets.TAILSCALE_AUTHKEY }}
       NEXT_PUBLIC_TURNSTILE_SITE_KEY: ${{ secrets.NEXT_PUBLIC_TURNSTILE_SITE_KEY }}
-      TURNSTILE_SECRET_KEY: ${{ secrets.TURNSTILE_SECRET_KEY }}
-      DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
+      INFISICAL_PROJECT_ID: 59f7eabf-94e5-49d0-85ed-975dfdf27f11
 
     steps:
-      - name: Notify Discord on start
-        run: |
-          MSG=":arrow_forward: Deploy started for ${GITHUB_REPOSITORY} @ ${GITHUB_SHA}\nRun: ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
-          curl -sS -H "Content-Type: application/json" -X POST -d "{\"content\": \"${MSG}\"}" "${DISCORD_WEBHOOK_URL}" || true
-
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Build Docker image
-        run: |
-          echo "Building Docker image ${DOCKER_IMAGE}:${GITHUB_SHA}"
-          docker build --build-arg NEXT_PUBLIC_TURNSTILE_SITE_KEY="${NEXT_PUBLIC_TURNSTILE_SITE_KEY}" -t "${DOCKER_IMAGE}:${GITHUB_SHA}" .
-          docker save "${DOCKER_IMAGE}:${GITHUB_SHA}" | gzip > "image_${GITHUB_SHA}.tar.gz"
-
-      - name: Start ssh-agent and add key
-        uses: webfactory/ssh-agent@v0.5.4
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
         with:
-          ssh-private-key: ${{ secrets.SSH_PRIVATE_KEY }}
+          node-version: '20'
+          cache: 'npm'
 
-      - name: Install and start Tailscale (when auth key provided)
-        if: env.TAILSCALE_AUTHKEY != ''
-        run: |
-          echo "TAILSCALE_AUTHKEY provided — installing tailscale"
-          sudo apt-get update -y
-          curl -fsSL https://tailscale.com/install.sh | sudo sh
-          sudo tailscaled --tun=userspace-networking &
-          sleep 1
-          # Join Tailnet and accept subnet routes so the runner can reach LAN addresses
-          sudo tailscale up --authkey=${TAILSCALE_AUTHKEY} --hostname=gha-deploy-${GITHUB_RUN_ID} --accept-routes || true
-          sudo tailscale status || true
-          # show IP and routing info to help debug connectivity to advertised subnets
-          ip addr || true
-          ip route || true
+      - name: Install dependencies
+        run: npm ci
 
-      - name: Prepare SSH known_hosts (when provided)
-        if: env.KNOWN_HOSTS != ''
-        run: |
-          mkdir -p ~/.ssh
-          echo "${KNOWN_HOSTS}" > ~/.ssh/known_hosts
-          chmod 600 ~/.ssh/known_hosts
+      - name: Install Infisical CLI
+        run: curl -1sLf 'https://artifacts-cli.infisical.com/setup.deb.sh' | sudo -E bash && sudo apt-get install -y infisical
 
-      - name: Validate required secrets and env
+      - name: Log in to Infisical
+        id: infisical_login
         run: |
-          # Fail early if required values are missing — these are necessary for the app to run
-          required=(TAILSCALE_AUTHKEY SSH_USER SSH_HOST DOCKER_IMAGE DOCKER_CONTAINER NEXT_PUBLIC_TURNSTILE_SITE_KEY TURNSTILE_SECRET_KEY DISCORD_WEBHOOK_URL)
-          missing=()
-          for v in "${required[@]}"; do
-            if [ -z "${!v}" ]; then
-              missing+=("$v")
-            fi
-          done
-          if [ ${#missing[@]} -gt 0 ]; then
-            echo "Missing required environment/secrets: ${missing[*]}"
-            exit 1
-          fi
+          TOKEN=$(infisical login --method=universal-auth \
+            --client-id="${{ secrets.INFISICAL_UNIVERSAL_AUTH_CLIENT_ID }}" \
+            --client-secret="${{ secrets.INFISICAL_UNIVERSAL_AUTH_CLIENT_SECRET }}" \
+            --plain --silent)
+          echo "::add-mask::$TOKEN"
+          echo "token=$TOKEN" >> "$GITHUB_OUTPUT"
 
-      - name: Create `.env.deploy` from repository secrets
+      - name: Notify Discord on start
+        env:
+          INFTOK: ${{ steps.infisical_login.outputs.token }}
         run: |
-          printf '%s\n' \
-            "NEXT_PUBLIC_TURNSTILE_SITE_KEY=${NEXT_PUBLIC_TURNSTILE_SITE_KEY}" \
-            "TURNSTILE_SECRET_KEY=${TURNSTILE_SECRET_KEY}" \
-            "DISCORD_WEBHOOK_URL=${DISCORD_WEBHOOK_URL}" > .env.deploy
-      - name: Preflight DNS and TCP check
-        run: |
-          echo "Resolving ${SSH_HOST}"
-          getent hosts "${SSH_HOST}" || (which nslookup >/dev/null 2>&1 && nslookup "${SSH_HOST}") || true
-          PORT=${SSH_PORT:-22}
-          echo "Testing TCP connect to ${SSH_HOST}:${PORT} (will install netcat if needed)"
-          sudo apt-get update -y || true
-          sudo apt-get install -y netcat-openbsd || true
-          if nc -vz -w5 "${SSH_HOST}" "${PORT}"; then
-            echo "TCP connect succeeded"
-          else
-            echo "TCP connect failed (port closed or filtered)"
-          fi
-          echo "Attempting SSH verbose handshake (may show banner timeout)"
-          ssh -o BatchMode=yes -o ConnectTimeout=10 -p "${PORT}" "${SSH_USER}@${SSH_HOST}" 'exit' || true
-      - name: Copy .env and image tarball to server
-        run: |
-          if [ -n "${KNOWN_HOSTS}" ]; then
-            SSH_OPTS="-o UserKnownHostsFile=~/.ssh/known_hosts -o StrictHostKeyChecking=yes"
-          else
-            SSH_OPTS="-o StrictHostKeyChecking=no"
-          fi
-          SSH_OPTS="${SSH_OPTS} -o BatchMode=yes -o ConnectTimeout=10"
-          echo "Uploading image and .env to ${SSH_HOST} (scp verbose)"
-          scp ${SSH_OPTS} -P ${SSH_PORT:-22} "image_${GITHUB_SHA}.tar.gz" "${SSH_USER}@${SSH_HOST}:~/"
-          scp ${SSH_OPTS} -P ${SSH_PORT:-22} ".env.deploy" "${SSH_USER}@${SSH_HOST}:~/"
-          shred -u .env.deploy || rm -f .env.deploy || true
+          MSG=":arrow_forward: Deploy started for ${GITHUB_REPOSITORY} @ ${GITHUB_SHA}\nRun: ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
+          infisical run --token="$INFTOK" --projectId="$INFISICAL_PROJECT_ID" --env=prod -- \
+            bash -c "curl -sS -H 'Content-Type: application/json' -X POST -d \"{\\\"content\\\": \\\"$MSG\\\"}\" \"\$PORTFOLIO_DISCORD_WEBHOOK_URL\"" || true
 
-      - name: Deploy on remote server
+      - name: Build static export
+        run: npm run build
+
+      - name: Set Worker secrets and deploy
+        env:
+          INFTOK: ${{ steps.infisical_login.outputs.token }}
         run: |
-          echo "Loading image and running container on remote host"
-          if [ -n "${KNOWN_HOSTS}" ]; then
-            SSH_OPTS="-o UserKnownHostsFile=~/.ssh/known_hosts -o StrictHostKeyChecking=yes"
-          else
-            SSH_OPTS="-o StrictHostKeyChecking=no"
-          fi
-          SSH_OPTS="${SSH_OPTS} -o BatchMode=yes -o ConnectTimeout=10"
-          echo "Running remote commands (ssh verbose)"
-          ssh ${SSH_OPTS} -p ${SSH_PORT:-22} ${SSH_USER}@${SSH_HOST} \
-            "set -x && mkdir -p ~/app || true && mv ~/.env.deploy ~/app/.env || true && \
-             chown ${SSH_USER}:${SSH_USER} ~/app/.env || true && chmod 600 ~/app/.env || true && \
-             docker load -i ~/image_${GITHUB_SHA}.tar.gz && \
-             if docker ps -a --format '{{.Names}}' | grep -wq \"${DOCKER_CONTAINER}\"; then \
-               docker stop ${DOCKER_CONTAINER} || true && \
-               docker rm ${DOCKER_CONTAINER} || true; \
-             else \
-               echo \"Container ${DOCKER_CONTAINER} not found, skipping stop/rm\"; \
-             fi && \
-             docker run -d --name ${DOCKER_CONTAINER} ${DOCKER_RUN_ARGS:-'-p 127.0.0.1:8080:3000 --restart unless-stopped --env-file /home/${SSH_USER}/app/.env'} ${DOCKER_IMAGE}:${GITHUB_SHA} && \
-             docker image prune -f || true && \
-             for OLD in $(docker images --format '{{.Repository}}:{{.Tag}} {{.ID}}' | awk -v repo=\"${DOCKER_IMAGE}\" -v keep=\"${GITHUB_SHA}\" '$1 ~ repo && $1 !~ keep {print $1}'); do \
-               docker rmi -f "$OLD" || true; \
-             done || true"
+          infisical run --token="$INFTOK" --projectId="$INFISICAL_PROJECT_ID" --env=prod -- \
+            bash -c '
+              set -e
+              export CLOUDFLARE_API_TOKEN="$CLOUDFLARE_WORKERS_API_TOKEN"
+              echo "$PORTFOLIO_TURNSTILE_SECRET_KEY" | npx wrangler secret put TURNSTILE_SECRET_KEY
+              echo "$PORTFOLIO_DISCORD_WEBHOOK_URL" | npx wrangler secret put DISCORD_WEBHOOK_URL
+              npx wrangler deploy
+            '
 
       - name: Notify Discord on success
         if: ${{ success() }}
+        env:
+          INFTOK: ${{ steps.infisical_login.outputs.token }}
         run: |
           MSG=":white_check_mark: Deploy succeeded for ${GITHUB_REPOSITORY} @ ${GITHUB_SHA}\nRun: ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
-          curl -sS -H "Content-Type: application/json" -X POST -d "{\"content\": \"${MSG}\"}" "${DISCORD_WEBHOOK_URL}" || true
+          infisical run --token="$INFTOK" --projectId="$INFISICAL_PROJECT_ID" --env=prod -- \
+            bash -c "curl -sS -H 'Content-Type: application/json' -X POST -d \"{\\\"content\\\": \\\"$MSG\\\"}\" \"\$PORTFOLIO_DISCORD_WEBHOOK_URL\"" || true
 
       - name: Notify Discord on failure
         if: ${{ failure() }}
+        env:
+          INFTOK: ${{ steps.infisical_login.outputs.token }}
         run: |
           MSG=":x: Deploy FAILED for ${GITHUB_REPOSITORY} @ ${GITHUB_SHA}\nRun: ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
-          curl -sS -H "Content-Type: application/json" -X POST -d "{\"content\": \"${MSG}\"}" "${DISCORD_WEBHOOK_URL}" || true
-
-      - name: Cleanup local tarball
-        if: always()
-        run: |
-          rm -f "image_${GITHUB_SHA}.tar.gz"
+          infisical run --token="$INFTOK" --projectId="$INFISICAL_PROJECT_ID" --env=prod -- \
+            bash -c "curl -sS -H 'Content-Type: application/json' -X POST -d \"{\\\"content\\\": \\\"$MSG\\\"}\" \"\$PORTFOLIO_DISCORD_WEBHOOK_URL\"" || true

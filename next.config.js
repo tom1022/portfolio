@@ -13,7 +13,8 @@ if (process.env.NODE_ENV === 'development') {
 
 module.exports = {
   reactStrictMode: true,
-  experimental: {
-    serverActions: true,
+  output: 'export',
+  images: {
+    unoptimized: true,
   },
 };
